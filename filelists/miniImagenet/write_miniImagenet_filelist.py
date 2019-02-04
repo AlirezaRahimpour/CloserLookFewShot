@@ -16,7 +16,7 @@ dataset_list = ['base', 'val', 'novel']
 cl = -1
 folderlist = []
 
-datasetmap = {'base':'train','val':'val','novel':'test'};
+datasetmap = {'base':'train_val','val':'val','novel':'test'};
 filelists = {'base':{},'val':{},'novel':{} }
 filelists_flat = {'base':[],'val':[],'novel':[] }
 labellists_flat = {'base':[],'val':[],'novel':[] }
@@ -32,6 +32,7 @@ for dataset in dataset_list:
                 folderlist.append(label)
                 filelists[dataset][label] = []
                 fnames = listdir( join(data_path, label) )
+                print(fnames)
                 fname_number = [ int(re.split('_|\.', fname)[1]) for fname in fnames]
                 sorted_fnames = list(zip( *sorted(  zip(fnames, fname_number), key = lambda f_tuple: f_tuple[1] )))[0]
                  
