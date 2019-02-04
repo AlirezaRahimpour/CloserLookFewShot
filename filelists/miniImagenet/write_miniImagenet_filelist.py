@@ -6,8 +6,7 @@ import json
 import random
 import re
 
-cwd = os.getcwd() 
-data_path = join(cwd,'../datas/images')
+data_path = '../datas/images'
 savedir = './'
 dataset_list = ['base', 'val', 'novel']
 
