@@ -6,7 +6,7 @@ import json
 import random
 import re
 
-data_path = '../datas/images'
+data_path = '../../datas/images'
 savedir = './'
 dataset_list = ['base', 'val', 'novel']
 
