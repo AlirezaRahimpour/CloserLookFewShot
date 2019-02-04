@@ -16,7 +16,7 @@ dataset_list = ['base', 'val', 'novel']
 cl = -1
 folderlist = []
 
-datasetmap = {'base':'train_val','val':'val','novel':'test'};
+datasetmap = {'base':'train','val':'val','novel':'test'};
 filelists = {'base':{},'val':{},'novel':{} }
 filelists_flat = {'base':[],'val':[],'novel':[] }
 labellists_flat = {'base':[],'val':[],'novel':[] }
