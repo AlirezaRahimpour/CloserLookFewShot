@@ -27,6 +27,7 @@ for dataset in dataset_list:
             if i == 0:
                 continue
             fid, _ , label = re.split(',|\.', line)
+            print("fid:",fid,"label:",label)
             label = label.replace('\n','')
             if not label in filelists[dataset]:
                 folderlist.append(label)
