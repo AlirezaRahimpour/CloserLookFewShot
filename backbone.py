@@ -178,7 +178,6 @@ class SimpleBlock(nn.Module):
         return out
 
 
-
 # Bottleneck block
 class BottleneckBlock(nn.Module):
     maml = False #Default
@@ -363,6 +362,201 @@ class ResNet(nn.Module):
     def forward(self,x):
         out = self.trunk(x)
         return out
+
+
+# SENet's Module
+
+class SEModule(nn.Module):
+    maml = True
+    def __init__(self, channels, reduction):
+        super(SEModule, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        if self.maml:
+            self.fc1 = Conv2d_fw(channels, channels // reduction, kernel_size=1,
+                             padding=0)
+            self.fc2 = Conv2d_fw(channels // reduction, channels, kernel_size=1,
+                             padding=0)
+        else:
+            self.fc1 = nn.Conv2d(channels, channels // reduction, kernel_size=1,
+                             padding=0)
+            self.fc2 = nn.Conv2d(channels // reduction, channels, kernel_size=1,
+                             padding=0)
+
+        self.relu = nn.ReLU(inplace=True)
+        
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        module_input = x
+        x = self.avg_pool(x)
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        x = self.sigmoid(x)
+        return module_input * x
+
+class SEBasicBlock(nn.Module):
+    expansion = 1
+    maml = True
+
+    def __init__(self, inplanes, planes, stride=1,noise=False):
+        super(SEBasicBlock, self).__init__()
+        if maml:
+            self.conv1 = Conv2d_fw(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+            self.bn1 = BatchNorm2d_fw(planes)
+        else:
+            self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+            self.bn1 = nn.BatchNorm2d(planes)
+        self.relu = nn.ReLU(inplace=True)
+        if noise:
+            out_planes = planes+1
+        else:
+            out_planes = planes
+
+        if maml:
+            self.conv2 = Conv2d_fw(planes, out_planes, kernel_size=3, stride=1, padding=1, bias=False)
+            self.bn2 = BatchNorm2d_fw(out_planes)
+        else:
+            self.conv2 = nn.Conv2d(planes, out_planes, kernel_size=3, stride=1, padding=1, bias=False)
+            self.bn2 = nn.BatchNorm2d(out_planes)
+        self.se = SEModule(out_planes,reduction=16)
+        self.downsample = nn.Sequential()
+        if stride != 1 or inplanes != out_planes:
+            if maml:
+                self.downsample = nn.Sequential(
+                    Conv2d_fw(inplanes, out_planes,
+                              kernel_size=1, stride=stride, bias=False),
+                    BatchNorm2d_fw(out_planes),
+                )
+
+            else:
+
+                self.downsample = nn.Sequential(
+                    nn.Conv2d(inplanes, out_planes,
+                              kernel_size=1, stride=stride, bias=False),
+                    nn.BatchNorm2d(out_planes),
+                )
+
+        self.stride = stride
+
+    def forward(self, x):
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.se(out)
+
+        out += self.downsample(x)
+        out = self.relu(out)
+
+        return out
+
+class SENet(nn.Module):
+    maml = True
+
+    def __init__(self, block, layers, noise=True):
+        self.inplanes = 64
+        super(SENet, self).__init__()
+        self.noise = noise
+        if maml:
+            self.conv1 = Conv2d_fw(3, 64, kernel_size=7, stride=2, padding=3,
+                               bias=False)
+            self.bn1 = BatchNorm2d_fw(64)
+
+        else:
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+                               bias=False)
+            self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.avgpool = nn.AvgPool2d(7, stride=1)
+
+        self.expansion = block.expansion
+
+
+    def _make_layer(self, block, planes, blocks, stride=1):
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride))
+        self.inplanes = planes * block.expansion
+        for i in range(1, blocks-1):
+            layers.append(block(self.inplanes, planes))
+        layers.append(block(self.inplanes,planes,with_variation=self.with_variation))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        variational_features = []
+
+        if self.noise: # variational version
+            feature1 = self.layer1(x) # [expansion*64+1,56,56]
+            split_size = [self.expansion*64,1]
+            feature1_mean,feature1_std = torch.split(feature1,split_size,dim=1)
+            feature1_std = torch.sigmoid(feature1_std)
+            feature1_std_ext = feature1_std.repeat(1,split_size[0],1,1)
+            feature1 = feature1_mean + feature1_std_ext*torch.randn(feature1_mean.size(),device=feature1.get_device())
+
+            feature2 = self.layer2(feature1) #[expansion*128+1,28,28]
+            split_size = [self.expansion*128,1]
+            feature2_mean,feature2_std = torch.split(feature2,split_size,dim=1)
+            feature2_std = torch.sigmoid(feature2_std)
+            feature2_std_ext = feature2_std.repeat(1,split_size[0],1,1)
+            feature2 = feature2_mean + feature2_std_ext*torch.randn(feature2_mean.size(),device=feature2.get_device())
+
+            feature3 = self.layer3(feature2) #[expansion*256+1,14,14]
+            split_size = [self.expansion*256,1]
+            feature3_mean,feature3_std = torch.split(feature3,split_size,dim=1)
+            feature3_std = torch.sigmoid(feature3_std)
+            feature3_std_ext = feature3_std.repeat(1,split_size[0],1,1)
+            feature3 = feature3_mean + feature3_std_ext*torch.randn(feature3_mean.size(),device=feature3.get_device())
+
+            feature4 = self.layer4(feature3) #[expansion*512+1,7,7]
+            split_size = [self.expansion*512,1]
+            feature4_mean,feature4_std = torch.split(feature4,split_size,dim=1)
+            feature4_std = torch.sigmoid(feature4_std)
+            feature4_std_ext = feature4_std.repeat(1,split_size[0],1,1)
+            feature4 = feature4_mean + feature4_std_ext*torch.randn(feature4_mean.size(),device=feature4.get_device())
+            last_feature = self.avgpool(feature4)
+
+            variational_features = [feature1_mean,feature1_std_ext,
+                                    feature2_mean,feature2_std_ext,
+                                    feature3_mean,feature3_std_ext,
+                                    feature4_mean,feature4_std_ext]
+
+            feature1_std = feature1_std.view(feature1_std.size(0),-1)
+            feature2_std = feature2_std.view(feature2_std.size(0),-1)
+            feature3_std = feature3_std.view(feature3_std.size(0),-1)
+            feature4_std = feature4_std.view(feature4_std.size(0),-1)
+
+            std_mean = (torch.mean(feature1_std,1) + torch.mean(feature2_std,1) + torch.mean(feature3_std,1) + torch.mean(feature4_std,1))/4.0
+
+        else: #standard version
+            feature1 = self.layer1(x) # [expansion*64,56,56]
+            feature2 = self.layer2(feature1) #[expansion*128,28,28]
+            feature3 = self.layer3(feature2) #[expansion*256,14,14]
+            feature4 = self.layer4(feature3) #[expansion*512,7,7]
+            std_mean = torch.zeros(feature1.size(0),1,device = feature1.get_device())
+            last_feature = self.avgpool(feature4)
+
+
+        last_feature = last_feature.view(last_feature.size(0), -1)
+
+        return last_feature,std_mean
+
+def SENet34(noise=False):
+    return SENet(SEBasicBlock,[3,4,6,3],noise)
 
 def Conv4():
     return ConvNet(4)
